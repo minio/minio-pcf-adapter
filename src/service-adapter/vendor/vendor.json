@@ -1,0 +1,25 @@
+{
+	"comment": "",
+	"ignore": "test",
+	"package": [
+		{
+			"checksumSHA1": "23lJGD8xSAS9zXdB268Sv9POFxQ=",
+			"path": "github.com/pivotal-cf/on-demand-services-sdk/bosh",
+			"revision": "81cda5d89ac5d38d54f4d6fe1aadaee8041da185",
+			"revisionTime": "2017-07-27T14:06:42Z"
+		},
+		{
+			"checksumSHA1": "ohbYyPu8PS01AK4c8HgZ852zB4I=",
+			"path": "github.com/pivotal-cf/on-demand-services-sdk/serviceadapter",
+			"revision": "81cda5d89ac5d38d54f4d6fe1aadaee8041da185",
+			"revisionTime": "2017-07-27T14:06:42Z"
+		},
+		{
+			"checksumSHA1": "yV+2de12Q/t09hBGYGKEOFr1/zc=",
+			"path": "gopkg.in/yaml.v2",
+			"revision": "e4d366fc3c7938e2958e662b4258c7a89e1f0e3e",
+			"revisionTime": "2016-07-15T03:37:55Z"
+		}
+	],
+	"rootPath": "github.com/minio/minio-pivotal-adapter/src/service-adapter"
+}

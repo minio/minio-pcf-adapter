@@ -1,0 +1,8 @@
+---
+name: odb-service-adapter
+
+templates: {}
+
+packages: [odb-service-adapter]
+
+properties: {}

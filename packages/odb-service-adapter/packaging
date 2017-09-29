@@ -1,0 +1,5 @@
+set -e
+
+mkdir -p ${BOSH_INSTALL_TARGET}/bin
+cp -a service-adapter ${BOSH_INSTALL_TARGET}/bin
+chmod +x ${BOSH_INSTALL_TARGET}/bin/service-adapter

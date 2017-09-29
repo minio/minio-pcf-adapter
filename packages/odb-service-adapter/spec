@@ -1,0 +1,6 @@
+---
+name: odb-service-adapter
+
+dependencies: []
+
+files: [service-adapter]
