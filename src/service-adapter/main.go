@@ -149,7 +149,10 @@ func main() {
 	// service-adapter generate-manifest <service-deployment-JSON> <plan-JSON> <request-params-JSON> <previous-manifest-YAML> <previous-plan-JSON>
 	// ODB calls us with empty strings for <previous-manifest-YAML> <previous-plan-JSON>
 	// because of which json.Unmarshal fails, hence we pass {} in place of empty strings.
-	args := os.Args[:5]
+	args := os.Args
+	if len(os.Args) > 5 {
+		args = os.Args[:5]
+	}
 	args = append(args, "{}", "{}")
 	serviceadapter.HandleCommandLineInvocation(args, adapter{}, adapter{}, adapter{})
 }
