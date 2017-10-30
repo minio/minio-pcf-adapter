@@ -42,6 +42,12 @@ type route struct {
 
 // Return domain name that looks like 351c705a-6210-4b5e-b853-472fc8cd7646.sys.pie-27.cfplatformeng.com
 func domainName(manifest bosh.BoshManifest) string {
+	domain := manifest.Properties["domain"].(string) // This will always be passed ODB.
+	subdomain := manifest.Properties["subdomain"]
+	if subdomain != nil {
+		// If cf create-service passed subdomain value, then use it.
+		return fmt.Sprintf("%s.minio.%s", subdomain.(string), domain)
+	}
 	return fmt.Sprintf("%s.%s", strings.TrimPrefix(manifest.Name, instancePrefix), manifest.Properties["domain"].(string))
 }
 
@@ -112,6 +118,10 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 	}
 
 	manifest.Properties = plan.Properties
+	subdomain := params["subdomain"]
+	if subdomain != nil {
+		manifest.Properties["subdomain"] = subdomain
+	}
 
 	manifest.Properties["route_registrar"] = map[string][]route{
 		"routes": []route{
