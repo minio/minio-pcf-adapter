@@ -83,9 +83,6 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 		deploymentType = params["gateway"].(string)
 	}
 	var deploymentInstanceGroupsToJobs map[string][]string
-	if (deploymentType == "azure" || deploymentType == "gcs") && plan.InstanceGroups[0].Instances != 1 {
-		return manifest, errors.New(`"erasure" type is the only deployment type supported`)
-	}
 	if deploymentType == "gcs" {
 		if params["googlecredentials"] == nil {
 			return manifest, errors.New(`googlecredentials should be provided for GCS`)
