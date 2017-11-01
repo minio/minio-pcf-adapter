@@ -40,17 +40,6 @@ type route struct {
 	Uris     []string `yaml:uris`
 }
 
-// Return domain name that looks like 351c705a-6210-4b5e-b853-472fc8cd7646.sys.pie-27.cfplatformeng.com
-func domainName(manifest bosh.BoshManifest) string {
-	domain := manifest.Properties["domain"].(string) // This will always be passed ODB.
-	subdomain := manifest.Properties["subdomain"]
-	if subdomain != nil {
-		// If cf create-service passed subdomain value, then use it.
-		return fmt.Sprintf("%s.minio.%s", subdomain.(string), domain)
-	}
-	return fmt.Sprintf("%s.%s", strings.TrimPrefix(manifest.Name, instancePrefix), manifest.Properties["domain"].(string))
-}
-
 // Adapter which implements the interfaces expected by serviceadapter.
 type adapter struct{}
 
@@ -66,11 +55,13 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 		return manifest, errors.New(`configuration not provided, please use "-c" option to provide configuration`)
 	}
 
+	// Number of instances, configured in the tile.
 	instances, err := strconv.Atoi(plan.Properties["instances"].(string))
 	if err != nil {
 		return manifest, errors.New(fmt.Sprintf(`Unable to parse "instances": %s`, err.Error()))
 	}
 	plan.InstanceGroups[0].Instances = instances
+
 	params := requestParams["parameters"].(map[string]interface{})
 
 	// If the number of instances is configured as 1 then we allow fs, gcs, azure.
@@ -79,25 +70,29 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 	if plan.InstanceGroups[0].Instances != 1 {
 		deploymentType = "erasure"
 	}
+
 	if params["gateway"] != nil {
 		deploymentType = params["gateway"].(string)
 	}
-	var deploymentInstanceGroupsToJobs map[string][]string
+
 	if deploymentType == "gcs" {
 		if params["googlecredentials"] == nil {
 			return manifest, errors.New(`googlecredentials should be provided for GCS`)
 		}
 	}
+	var minioJobType string
 	switch deploymentType {
 	case "fs", "erasure":
-		deploymentInstanceGroupsToJobs = map[string][]string{"minio-ig": []string{"minio-server", "route_registrar"}}
+		minioJobType = "minio-server"
 	case "azure":
-		deploymentInstanceGroupsToJobs = map[string][]string{"minio-ig": []string{"minio-azure", "route_registrar"}}
+		minioJobType = "minio-azure"
 	case "gcs":
-		deploymentInstanceGroupsToJobs = map[string][]string{"minio-ig": []string{"minio-gcs", "route_registrar"}}
+		minioJobType = "minio-gcs"
 	default:
 		return manifest, errors.New(fmt.Sprintf(`"%s" deployment type is not supported`, deploymentType))
 	}
+
+	deploymentInstanceGroupsToJobs := map[string][]string{"minio-ig": []string{minioJobType, "route_registrar"}}
 
 	// Construct the manifest
 	manifest.Name = serviceDeployment.DeploymentName
@@ -114,21 +109,38 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 		manifest.Update.UpdateWatchTime = plan.Update.UpdateWatchTime
 	}
 
-	manifest.Properties = plan.Properties
+	// Construct manifest properties.
+	mprops := make(map[string]interface{})
+	pprops := plan.Properties
+
+	if pprops["pcf_tile_version"] != nil {
+		mprops["pcf_tile_version"] = pprops["pcf_tile_version"]
+	}
+	mprops["nats"] = pprops["nats"]
+
+	domain := fmt.Sprintf("%s.%s", strings.TrimPrefix(manifest.Name, instancePrefix), pprops["domain"].(string))
 	subdomain := params["subdomain"]
 	if subdomain != nil {
-		manifest.Properties["subdomain"] = subdomain
+		// If cf create-service passed subdomain value, then use it.
+		domain = fmt.Sprintf("%s.storage.%s", subdomain.(string), pprops["domain"].(string))
 	}
-
-	manifest.Properties["route_registrar"] = map[string][]route{
+	mprops["domain"] = domain
+	mprops["route_registrar"] = map[string][]route{
 		"routes": []route{
 			{
 				"route", 9000, "20s",
-				[]string{domainName(manifest)},
+				[]string{domain},
 			},
 		},
 	}
-	manifest.Properties["credential"] = requestParams["parameters"]
+	credential := make(map[string]string)
+	credential["accesskey"] = params["accesskey"].(string)
+	credential["secretkey"] = params["secretkey"].(string)
+	if params["googlecredentials"] != nil {
+		credential["googlecredentials"] = params["googlecredentials"].(string)
+	}
+	mprops["credential"] = credential
+	manifest.Properties = mprops
 	b, err := yaml.Marshal(manifest)
 	if err != nil {
 		return manifest, err
@@ -148,8 +160,8 @@ func (a adapter) DeleteBinding(bindingID string, deploymentTopology bosh.BoshVMs
 }
 
 // DashboardUrl - returns URL that looks like https://351c705a-6210-4b5e-b853-472fc8cd7646.sys.pie-27.cfplatformeng.com
-func (a adapter) DashboardUrl(instanceID string, plan serviceadapter.Plan, manifest bosh.BoshManifest) (serviceadapter.DashboardUrl, error) {
-	return serviceadapter.DashboardUrl{"https://" + domainName(manifest)}, nil
+func (a adapter) DashboardUrl(instanceID string, plan serviceadapter.Plan, manifest bosh.BoshManifest) (url serviceadapter.DashboardUrl, err error) {
+	return serviceadapter.DashboardUrl{"https://" + manifest.Properties["domain"].(string)}, nil
 }
 
 func main() {
