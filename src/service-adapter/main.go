@@ -25,7 +25,7 @@ import (
 
 	"github.com/pivotal-cf/on-demand-services-sdk/bosh"
 	"github.com/pivotal-cf/on-demand-services-sdk/serviceadapter"
-	"gopkg.in/yaml.v2"
+	yaml "gopkg.in/yaml.v2"
 )
 
 // Service instance name looks like service-instance_351c705a-6210-4b5e-b853-472fc8cd7646
@@ -43,6 +43,14 @@ type route struct {
 // Adapter which implements the interfaces expected by serviceadapter.
 type adapter struct{}
 
+func fromPreviousManifestParameters(params map[interface{}]interface{}) map[string]interface{} {
+	newMap := make(map[string]interface{})
+	for k, v := range params {
+		newMap[k.(string)] = v
+	}
+	return newMap
+}
+
 // GenerateManifest - generates BOSH manifest file.
 func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeployment, plan serviceadapter.Plan, requestParams serviceadapter.RequestParameters, previousManifest *bosh.BoshManifest, previousPlan *serviceadapter.Plan) (manifest bosh.BoshManifest, err error) {
 	f, err := os.Create("/tmp/adapter.log") // We store the yaml instance here just for debugging purposes.
@@ -51,8 +59,26 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 	}
 	defer f.Close()
 
+	var params map[string]interface{}
 	if requestParams["parameters"] == nil {
-		return manifest, errors.New(`configuration not provided, please use "-c" option to provide configuration`)
+		if previousManifest.Name == "" {
+			// Previous manifest is not available implies that a fresh instance is getting created.
+			// Instance can't be created with out -c config option.
+			return manifest, errors.New(`configuration not provided, please use "-c" option to provide configuration`)
+		}
+		if previousManifest.Properties["parameters"] == nil {
+			return manifest, errors.New(`configuration parameters not found, migration not supported`)
+		}
+		// Number of instances will always be same as previous deployment.
+		plan.Properties["instances"] = previousPlan.Properties["instances"]
+		params = fromPreviousManifestParameters(previousManifest.Properties["parameters"].(map[interface{}]interface{}))
+	} else {
+		if previousManifest.Name != "" {
+			// If user tried to do "cf update-service" return error
+			return manifest, errors.New(`Please update configuration using "mc admin"`)
+		}
+		// Fresh instance is getting created.
+		params = requestParams["parameters"].(map[string]interface{})
 	}
 
 	// Number of instances, configured in the tile.
@@ -61,8 +87,6 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 		return manifest, errors.New(fmt.Sprintf(`Unable to parse "instances": %s`, err.Error()))
 	}
 	plan.InstanceGroups[0].Instances = instances
-
-	params := requestParams["parameters"].(map[string]interface{})
 
 	// If the number of instances is configured as 1 then we allow fs, gcs, azure.
 	// If the number of instances is not 1 then we allow only erasure.
@@ -113,10 +137,17 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 	mprops := make(map[string]interface{})
 	pprops := plan.Properties
 
+	for i, job := range manifest.InstanceGroups[0].Jobs {
+		if job.Name == "route_registrar" {
+			manifest.InstanceGroups[0].Jobs[i] = job.AddCrossDeploymentConsumesLink("nats", "nats", pprops["deployment"].(string))
+		}
+	}
+
+	mprops["parameters"] = params
+
 	if pprops["pcf_tile_version"] != nil {
 		mprops["pcf_tile_version"] = pprops["pcf_tile_version"]
 	}
-	mprops["nats"] = pprops["nats"]
 
 	domain := fmt.Sprintf("%s.%s", strings.TrimPrefix(manifest.Name, instancePrefix), pprops["domain"].(string))
 	subdomain := params["subdomain"]
@@ -169,9 +200,17 @@ func main() {
 	// ODB calls us with empty strings for <previous-manifest-YAML> <previous-plan-JSON>
 	// because of which json.Unmarshal fails, hence we pass {} in place of empty strings.
 	args := os.Args
-	if len(os.Args) > 5 {
-		args = os.Args[:5]
+	if len(args) == 5 {
+		// If ODB does not pass previous-manifest-YAML and previous-plan-JSON.
+		args = append(args, "{}", "{}")
 	}
-	args = append(args, "{}", "{}")
+	if args[5] == "" {
+		// Sometimes ODB passes "" for previous-manifest-YAML
+		args[5] = "{}"
+	}
+	if args[6] == "null" {
+		// Sometimes ODB passes "" for previous-plan-JSON
+		args[6] = "{}"
+	}
 	serviceadapter.HandleCommandLineInvocation(args, adapter{}, adapter{}, adapter{})
 }
