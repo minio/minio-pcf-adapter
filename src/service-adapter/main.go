@@ -60,6 +60,7 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 	defer f.Close()
 
 	var params map[string]interface{}
+	var instances int
 	if requestParams["parameters"] == nil {
 		if previousManifest.Name == "" {
 			// Previous manifest is not available implies that a fresh instance is getting created.
@@ -70,7 +71,7 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 			return manifest, errors.New(`configuration parameters not found, migration not supported`)
 		}
 		// Number of instances will always be same as previous deployment.
-		plan.Properties["instances"] = previousPlan.Properties["instances"]
+		instances = previousManifest.InstanceGroups[0].Instances
 		params = fromPreviousManifestParameters(previousManifest.Properties["parameters"].(map[interface{}]interface{}))
 	} else {
 		if previousManifest.Name != "" {
@@ -78,14 +79,15 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 			return manifest, errors.New(`Please update configuration using "mc admin"`)
 		}
 		// Fresh instance is getting created.
+
+		// Number of instances, configured in the tile.
+		instances, err = strconv.Atoi(plan.Properties["instances"].(string))
+		if err != nil {
+			return manifest, errors.New(fmt.Sprintf(`Unable to parse "instances": %s`, err.Error()))
+		}
 		params = requestParams["parameters"].(map[string]interface{})
 	}
 
-	// Number of instances, configured in the tile.
-	instances, err := strconv.Atoi(plan.Properties["instances"].(string))
-	if err != nil {
-		return manifest, errors.New(fmt.Sprintf(`Unable to parse "instances": %s`, err.Error()))
-	}
 	plan.InstanceGroups[0].Instances = instances
 
 	// If the number of instances is configured as 1 then we allow fs, gcs, azure.
