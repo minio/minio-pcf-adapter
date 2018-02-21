@@ -1,6 +1,10 @@
 builds:
+  34e4954b-e8bf-498f-6934-0274d93b6877:
+    version: "3"
   386a709e-fc31-4179-44f7-99bd143f94ea:
     version: "2"
   6e2d19a1-1c44-4405-486a-88c15df94484:
     version: "1"
+  a25b5211-8a1c-4b54-5c14-a57ab2e7f8db:
+    version: "4"
 format-version: "2"
