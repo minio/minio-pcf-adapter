@@ -19,9 +19,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"time"
 
 	"github.com/pivotal-cf/on-demand-services-sdk/bosh"
 	"github.com/pivotal-cf/on-demand-services-sdk/serviceadapter"
@@ -32,6 +36,7 @@ import (
 // We strip service-instance_ and use 351c705a-6210-4b5e-b853-472fc8cd7646.[CFDOMAIN.com]
 // for configuring go-router.
 const instancePrefix = "service-instance_"
+const tmpDir = "/tmp/minio/"
 
 type route struct {
 	Name     string   `yaml:"name"`
@@ -39,9 +44,6 @@ type route struct {
 	Interval string   `yaml:"registration_interval"`
 	Uris     []string `yaml:uris`
 }
-
-// Adapter which implements the interfaces expected by serviceadapter.
-type adapter struct{}
 
 func fromPreviousManifestParameters(params map[interface{}]interface{}) map[string]interface{} {
 	newMap := make(map[string]interface{})
@@ -51,41 +53,51 @@ func fromPreviousManifestParameters(params map[interface{}]interface{}) map[stri
 	return newMap
 }
 
+// Adapter which implements the interfaces expected by serviceadapter.
+type adapter struct{}
+
 // GenerateManifest - generates BOSH manifest file.
-func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeployment, plan serviceadapter.Plan, requestParams serviceadapter.RequestParameters, previousManifest *bosh.BoshManifest, previousPlan *serviceadapter.Plan) (manifest bosh.BoshManifest, err error) {
-	f, err := os.Create("/tmp/adapter.log") // We store the yaml instance here just for debugging purposes.
+func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeployment, plan serviceadapter.Plan, requestParams serviceadapter.RequestParameters, previousManifest *bosh.BoshManifest, previousPlan *serviceadapter.Plan, secrets serviceadapter.ManifestSecrets) (generateManifest serviceadapter.GenerateManifestOutput, err error) {
+	pid := os.Getpid()
+	outputFile := fmt.Sprintf(tmpDir+"output-%d.yml", pid)
+	manifest := generateManifest.Manifest
+	f, err := os.Create(outputFile) // We store the yaml instance here just for debugging purposes.
 	if err != nil {
-		return manifest, err
+		return generateManifest, err
 	}
 	defer f.Close()
 
 	var params map[string]interface{}
 	var instances int
-	if requestParams["parameters"] == nil {
-		if previousManifest.Name == "" {
-			// Previous manifest is not available implies that a fresh instance is getting created.
-			// Instance can't be created with out -c config option.
-			return manifest, errors.New(`configuration not provided, please use "-c" option to provide configuration`)
+	if previousManifest == nil || previousManifest.Name == "" {
+		// Previous manifest is not available implies that a fresh instance is getting created.
+		// Instance can't be created with out -c config option providing AccessKey/SecretKey.
+		if requestParams["parameters"] == nil {
+			f.WriteString(`AcessKey/SecretKey configuration not provided.\n`)
+			return generateManifest, errors.New(`Acesskey/Secretkey configuration not provided.\n`)
 		}
-		if previousManifest.Properties["parameters"] == nil {
-			return manifest, errors.New(`configuration parameters not found, migration not supported`)
-		}
-		// Number of instances will always be same as previous deployment.
-		instances = previousManifest.InstanceGroups[0].Instances
-		params = fromPreviousManifestParameters(previousManifest.Properties["parameters"].(map[interface{}]interface{}))
-	} else {
-		if previousManifest.Name != "" {
-			// If user tried to do "cf update-service" return error
-			return manifest, errors.New(`Please update configuration using "mc admin"`)
-		}
+
 		// Fresh instance is getting created.
 
 		// Number of instances, configured in the tile.
 		instances, err = strconv.Atoi(plan.Properties["instances"].(string))
 		if err != nil {
-			return manifest, errors.New(fmt.Sprintf(`Unable to parse "instances": %s`, err.Error()))
+			f.WriteString(`Unable to parse "instances"`)
+			return generateManifest, errors.New(fmt.Sprintf(`Unable to parse "instances": %s`, err.Error()))
 		}
 		params = requestParams["parameters"].(map[string]interface{})
+	} else {
+		// Previous manifest available implies that we might be updating the plan or config.
+		if requestParams["parameters"] != nil {
+			params = requestParams["parameters"].(map[string]interface{})
+			if params["gateway"] != nil {
+				return generateManifest, errors.New(`"gateway" can be specified only during instance creation`)
+			}
+		} else {
+			params = fromPreviousManifestParameters(previousManifest.Properties["parameters"].(map[interface{}]interface{}))
+		}
+		// Number of instances will always be same as previous deployment.
+		instances = previousManifest.InstanceGroups[0].Instances
 	}
 
 	plan.InstanceGroups[0].Instances = instances
@@ -103,7 +115,8 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 
 	if deploymentType == "gcs" {
 		if params["googlecredentials"] == nil {
-			return manifest, errors.New(`googlecredentials should be provided for GCS`)
+			f.WriteString(`googlecredentials should be provided for GCS`)
+			return generateManifest, errors.New(`googlecredentials should be provided for GCS`)
 		}
 	}
 	var minioJobType string
@@ -115,10 +128,11 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 	case "gcs":
 		minioJobType = "minio-gcs"
 	default:
-		return manifest, errors.New(fmt.Sprintf(`"%s" deployment type is not supported`, deploymentType))
+		f.WriteString(fmt.Sprintf(`"%s" deployment type is not supported`, deploymentType))
+		return generateManifest, errors.New(fmt.Sprintf(`"%s" deployment type is not supported`, deploymentType))
 	}
 
-	deploymentInstanceGroupsToJobs := map[string][]string{"minio-ig": []string{minioJobType, "route_registrar"}}
+	deploymentInstanceGroupsToJobs := map[string][]string{"minio-ig": []string{minioJobType, "route_registrar", "bpm"}}
 
 	// Construct the manifest
 	manifest.Name = serviceDeployment.DeploymentName
@@ -127,7 +141,11 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 	}
 	manifest.Stemcells = []bosh.Stemcell{{"os-stemcell", serviceDeployment.Stemcell.OS, serviceDeployment.Stemcell.Version}}
 	manifest.InstanceGroups, err = serviceadapter.GenerateInstanceGroupsWithNoProperties(plan.InstanceGroups, serviceDeployment.Releases, "os-stemcell", deploymentInstanceGroupsToJobs)
+	if err != nil {
+		return generateManifest, err
+	}
 	if plan.Update != nil {
+		manifest.Update = &bosh.Update{}
 		manifest.Update.Canaries = plan.Update.Canaries
 		manifest.Update.CanaryWatchTime = plan.Update.CanaryWatchTime
 		manifest.Update.MaxInFlight = plan.Update.MaxInFlight
@@ -176,19 +194,21 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 	manifest.Properties = mprops
 	b, err := yaml.Marshal(manifest)
 	if err != nil {
-		return manifest, err
+		f.WriteString("error generating manifest " + err.Error())
+		return generateManifest, err
 	}
 	f.Write(b)
-	return manifest, nil
+	generateManifest.Manifest = manifest
+	return generateManifest, nil
 }
 
 // CreateBinding - Not implemented
-func (a adapter) CreateBinding(bindingID string, deploymentTopology bosh.BoshVMs, manifest bosh.BoshManifest, requestParams serviceadapter.RequestParameters) (binding serviceadapter.Binding, err error) {
+func (a adapter) CreateBinding(bindingID string, deploymentTopology bosh.BoshVMs, manifest bosh.BoshManifest, requestParams serviceadapter.RequestParameters, secrets serviceadapter.ManifestSecrets, address serviceadapter.DNSAddresses) (binding serviceadapter.Binding, err error) {
 	return binding, errors.New("not supported")
 }
 
 // DeleteBinding - Not implemented
-func (a adapter) DeleteBinding(bindingID string, deploymentTopology bosh.BoshVMs, manifest bosh.BoshManifest, requestParams serviceadapter.RequestParameters) error {
+func (a adapter) DeleteBinding(bindingID string, deploymentTopology bosh.BoshVMs, manifest bosh.BoshManifest, requestParams serviceadapter.RequestParameters, secrets serviceadapter.ManifestSecrets) error {
 	return errors.New("not supported")
 }
 
@@ -197,22 +217,60 @@ func (a adapter) DashboardUrl(instanceID string, plan serviceadapter.Plan, manif
 	return serviceadapter.DashboardUrl{"https://" + manifest.Properties["domain"].(string)}, nil
 }
 
+func (a adapter) GeneratePlanSchema(plan serviceadapter.Plan) (schema serviceadapter.PlanSchema, err error) {
+	return schema, errors.New("not supported")
+}
+
+func cleanupTmpDir() {
+	if err := os.Mkdir(tmpDir, 0700); err != nil {
+		if !strings.Contains(err.Error(), "exists") {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	}
+	yesterday := time.Now().AddDate(0, 0, -1)
+	// Remove all files older than 1 day.
+	filepath.Walk(tmpDir, func(path string, info os.FileInfo, err error) error {
+		if info.IsDir() {
+			return nil
+		}
+		if info.ModTime().Before(yesterday) {
+			os.Remove(path)
+		}
+		return nil
+	})
+}
+
 func main() {
-	// service-adapter generate-manifest <service-deployment-JSON> <plan-JSON> <request-params-JSON> <previous-manifest-YAML> <previous-plan-JSON>
-	// ODB calls us with empty strings for <previous-manifest-YAML> <previous-plan-JSON>
-	// because of which json.Unmarshal fails, hence we pass {} in place of empty strings.
-	args := os.Args
-	if len(args) == 5 {
-		// If ODB does not pass previous-manifest-YAML and previous-plan-JSON.
-		args = append(args, "{}", "{}")
+	pid := os.Getpid()
+	cleanupTmpDir()
+	inputFile := fmt.Sprintf(tmpDir+"input-%d.json", pid)
+	input, err := os.Create(inputFile)
+	if err != nil {
+		fmt.Println("Unable to open input.json", err.Error())
+		os.Exit(1)
 	}
-	if args[5] == "" {
-		// Sometimes ODB passes "" for previous-manifest-YAML
-		args[5] = "{}"
+
+	b, err := ioutil.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Println("Unable to read from os.Stdin", err.Error())
+		os.Exit(1)
 	}
-	if args[6] == "null" {
-		// Sometimes ODB passes "" for previous-plan-JSON
-		args[6] = "{}"
+
+	fmt.Fprint(input, string(b))
+	input.Close()
+	input, err = os.Open(inputFile)
+	if err != nil {
+		fmt.Println("Unable to open input.json", err.Error())
+		os.Exit(1)
 	}
-	serviceadapter.HandleCommandLineInvocation(args, adapter{}, adapter{}, adapter{})
+	os.Stdin = input
+
+	handler := serviceadapter.CommandLineHandler{
+		ManifestGenerator:     adapter{},
+		Binder:                adapter{},
+		DashboardURLGenerator: adapter{},
+		SchemaGenerator:       adapter{},
+	}
+	serviceadapter.HandleCLI(os.Args, handler)
 }

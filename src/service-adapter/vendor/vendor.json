@@ -3,16 +3,22 @@
 	"ignore": "test",
 	"package": [
 		{
-			"checksumSHA1": "23lJGD8xSAS9zXdB268Sv9POFxQ=",
-			"path": "github.com/pivotal-cf/on-demand-services-sdk/bosh",
-			"revision": "81cda5d89ac5d38d54f4d6fe1aadaee8041da185",
-			"revisionTime": "2017-07-27T14:06:42Z"
+			"checksumSHA1": "n23FKrVqyTMu6KF+v519EozutZ0=",
+			"path": "github.com/pivotal-cf/brokerapi",
+			"revision": "bfda5bdd6db209d127d42731bf18369fc6d3f054",
+			"revisionTime": "2018-11-27T16:34:49Z"
 		},
 		{
-			"checksumSHA1": "ohbYyPu8PS01AK4c8HgZ852zB4I=",
+			"checksumSHA1": "FYZZNO3KKlQ45XQPtB1/npm6rs8=",
+			"path": "github.com/pivotal-cf/on-demand-services-sdk/bosh",
+			"revision": "980106fb549f2e8d7fa20b7c8f998e5d30706188",
+			"revisionTime": "2018-11-01T11:39:05Z"
+		},
+		{
+			"checksumSHA1": "stB24mFoLbVpG3N5DHy2I5pTPDs=",
 			"path": "github.com/pivotal-cf/on-demand-services-sdk/serviceadapter",
-			"revision": "81cda5d89ac5d38d54f4d6fe1aadaee8041da185",
-			"revisionTime": "2017-07-27T14:06:42Z"
+			"revision": "980106fb549f2e8d7fa20b7c8f998e5d30706188",
+			"revisionTime": "2018-11-01T11:39:05Z"
 		},
 		{
 			"checksumSHA1": "yV+2de12Q/t09hBGYGKEOFr1/zc=",
@@ -21,5 +27,5 @@
 			"revisionTime": "2016-07-15T03:37:55Z"
 		}
 	],
-	"rootPath": "github.com/minio/minio-pivotal-adapter/src/service-adapter"
+	"rootPath": "github.com/minio/minio-pcf-adapter/src/service-adapter"
 }
