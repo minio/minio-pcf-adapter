@@ -57,8 +57,10 @@ func fromPreviousManifestParameters(params map[interface{}]interface{}) map[stri
 type adapter struct{}
 
 // GenerateManifest - generates BOSH manifest file.
-func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeployment, plan serviceadapter.Plan, requestParams serviceadapter.RequestParameters, previousManifest *bosh.BoshManifest, previousPlan *serviceadapter.Plan, secrets serviceadapter.ManifestSecrets) (generateManifest serviceadapter.GenerateManifestOutput, err error) {
+// func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeployment, plan serviceadapter.Plan, requestParams serviceadapter.RequestParameters, previousManifest *bosh.BoshManifest, previousPlan *serviceadapter.Plan, secrets serviceadapter.ManifestSecrets) (generateManifest serviceadapter.GenerateManifestOutput, err error) {
+func (a adapter) GenerateManifest(generateParams serviceadapter.GenerateManifestParams) (generateManifest serviceadapter.GenerateManifestOutput, err error) {
 	pid := os.Getpid()
+	serviceDeployment := generateParams.ServiceDeployment
 	outputFile := fmt.Sprintf(tmpDir+"output-%d.yml", pid)
 	manifest := generateManifest.Manifest
 	f, err := os.Create(outputFile) // We store the yaml instance here just for debugging purposes.
@@ -69,6 +71,10 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 
 	var params map[string]interface{}
 	var instances int
+	plan := generateParams.Plan
+	requestParams := generateParams.RequestParams
+	previousManifest := generateParams.PreviousManifest
+
 	if previousManifest == nil || previousManifest.Name == "" {
 		// Previous manifest is not available implies that a fresh instance is getting created.
 		// Instance can't be created with out -c config option providing AccessKey/SecretKey.
@@ -139,9 +145,10 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 	for _, release := range serviceDeployment.Releases {
 		manifest.Releases = append(manifest.Releases, bosh.Release{release.Name, release.Version})
 	}
-	manifest.Stemcells = []bosh.Stemcell{{"os-stemcell", serviceDeployment.Stemcell.OS, serviceDeployment.Stemcell.Version}}
+	manifest.Stemcells = []bosh.Stemcell{{"os-stemcell", serviceDeployment.Stemcells[0].OS, serviceDeployment.Stemcells[0].Version}}
 	manifest.InstanceGroups, err = serviceadapter.GenerateInstanceGroupsWithNoProperties(plan.InstanceGroups, serviceDeployment.Releases, "os-stemcell", deploymentInstanceGroupsToJobs)
 	if err != nil {
+		fmt.Println(err)
 		return generateManifest, err
 	}
 	if plan.Update != nil {
@@ -203,21 +210,22 @@ func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeploy
 }
 
 // CreateBinding - Not implemented
-func (a adapter) CreateBinding(bindingID string, deploymentTopology bosh.BoshVMs, manifest bosh.BoshManifest, requestParams serviceadapter.RequestParameters, secrets serviceadapter.ManifestSecrets, address serviceadapter.DNSAddresses) (binding serviceadapter.Binding, err error) {
+func (a adapter) CreateBinding(_ serviceadapter.CreateBindingParams) (binding serviceadapter.Binding, err error) {
 	return binding, errors.New("not supported")
 }
 
 // DeleteBinding - Not implemented
-func (a adapter) DeleteBinding(bindingID string, deploymentTopology bosh.BoshVMs, manifest bosh.BoshManifest, requestParams serviceadapter.RequestParameters, secrets serviceadapter.ManifestSecrets) error {
+func (a adapter) DeleteBinding(_ serviceadapter.DeleteBindingParams) error {
 	return errors.New("not supported")
 }
 
 // DashboardUrl - returns URL that looks like https://351c705a-6210-4b5e-b853-472fc8cd7646.sys.pie-27.cfplatformeng.com
-func (a adapter) DashboardUrl(instanceID string, plan serviceadapter.Plan, manifest bosh.BoshManifest) (url serviceadapter.DashboardUrl, err error) {
-	return serviceadapter.DashboardUrl{"https://" + manifest.Properties["domain"].(string)}, nil
+// func (a adapter) DashboardUrl(instanceID string, plan serviceadapter.Plan, manifest bosh.BoshManifest) (url serviceadapter.DashboardUrl, err error) {
+func (a adapter) DashboardUrl(params serviceadapter.DashboardUrlParams) (url serviceadapter.DashboardUrl, err error) {
+	return serviceadapter.DashboardUrl{"https://" + params.Manifest.Properties["domain"].(string)}, nil
 }
 
-func (a adapter) GeneratePlanSchema(plan serviceadapter.Plan) (schema serviceadapter.PlanSchema, err error) {
+func (a adapter) GeneratePlanSchema(plan serviceadapter.GeneratePlanSchemaParams) (schema serviceadapter.PlanSchema, err error) {
 	return schema, errors.New("not supported")
 }
 
