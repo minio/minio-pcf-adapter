@@ -22,7 +22,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"time"
@@ -57,7 +56,6 @@ func fromPreviousManifestParameters(params map[interface{}]interface{}) map[stri
 type adapter struct{}
 
 // GenerateManifest - generates BOSH manifest file.
-// func (a adapter) GenerateManifest(serviceDeployment serviceadapter.ServiceDeployment, plan serviceadapter.Plan, requestParams serviceadapter.RequestParameters, previousManifest *bosh.BoshManifest, previousPlan *serviceadapter.Plan, secrets serviceadapter.ManifestSecrets) (generateManifest serviceadapter.GenerateManifestOutput, err error) {
 func (a adapter) GenerateManifest(generateParams serviceadapter.GenerateManifestParams) (generateManifest serviceadapter.GenerateManifestOutput, err error) {
 	pid := os.Getpid()
 	serviceDeployment := generateParams.ServiceDeployment
@@ -69,49 +67,18 @@ func (a adapter) GenerateManifest(generateParams serviceadapter.GenerateManifest
 	}
 	defer f.Close()
 
-	var params map[string]interface{}
-	var instances int
-	plan := generateParams.Plan
-	requestParams := generateParams.RequestParams
-	previousManifest := generateParams.PreviousManifest
-
-	if previousManifest == nil || previousManifest.Name == "" {
-		// Previous manifest is not available implies that a fresh instance is getting created.
-		// Instance can't be created with out -c config option providing AccessKey/SecretKey.
-		if requestParams["parameters"] == nil {
-			f.WriteString(`AcessKey/SecretKey configuration not provided.\n`)
-			return generateManifest, errors.New(`Acesskey/Secretkey configuration not provided.\n`)
+	params := generateParams.RequestParams.ArbitraryParams()
+	if len(params) == 0 {
+		if generateParams.PreviousManifest == nil {
+			return generateManifest, errors.New("request-parameters/previous-manifest not provideed")
 		}
-
-		// Fresh instance is getting created.
-
-		// Number of instances, configured in the tile.
-		instances, err = strconv.Atoi(plan.Properties["instances"].(string))
-		if err != nil {
-			f.WriteString(`Unable to parse "instances"`)
-			return generateManifest, errors.New(fmt.Sprintf(`Unable to parse "instances": %s`, err.Error()))
-		}
-		params = requestParams["parameters"].(map[string]interface{})
-	} else {
-		// Previous manifest available implies that we might be updating the plan or config.
-		if requestParams["parameters"] != nil {
-			params = requestParams["parameters"].(map[string]interface{})
-			if params["gateway"] != nil {
-				return generateManifest, errors.New(`"gateway" can be specified only during instance creation`)
-			}
-		} else {
-			params = fromPreviousManifestParameters(previousManifest.Properties["parameters"].(map[interface{}]interface{}))
-		}
-		// Number of instances will always be same as previous deployment.
-		instances = previousManifest.InstanceGroups[0].Instances
+		params = fromPreviousManifestParameters(generateParams.PreviousManifest.Properties["parameters"].(map[interface{}]interface{}))
 	}
-
-	plan.InstanceGroups[0].Instances = instances
 
 	// If the number of instances is configured as 1 then we allow fs, gcs, azure.
 	// If the number of instances is not 1 then we allow only erasure.
 	deploymentType := "fs"
-	if plan.InstanceGroups[0].Instances != 1 {
+	if generateParams.Plan.InstanceGroups[0].Instances != 1 {
 		deploymentType = "erasure"
 	}
 
@@ -146,23 +113,21 @@ func (a adapter) GenerateManifest(generateParams serviceadapter.GenerateManifest
 		manifest.Releases = append(manifest.Releases, bosh.Release{release.Name, release.Version})
 	}
 	manifest.Stemcells = []bosh.Stemcell{{"os-stemcell", serviceDeployment.Stemcells[0].OS, serviceDeployment.Stemcells[0].Version}}
-	manifest.InstanceGroups, err = serviceadapter.GenerateInstanceGroupsWithNoProperties(plan.InstanceGroups, serviceDeployment.Releases, "os-stemcell", deploymentInstanceGroupsToJobs)
+	manifest.InstanceGroups, err = serviceadapter.GenerateInstanceGroupsWithNoProperties(generateParams.Plan.InstanceGroups, serviceDeployment.Releases, "os-stemcell", deploymentInstanceGroupsToJobs)
 	if err != nil {
-		fmt.Println(err)
 		return generateManifest, err
 	}
-	if plan.Update != nil {
-		manifest.Update = &bosh.Update{}
-		manifest.Update.Canaries = plan.Update.Canaries
-		manifest.Update.CanaryWatchTime = plan.Update.CanaryWatchTime
-		manifest.Update.MaxInFlight = plan.Update.MaxInFlight
-		manifest.Update.Serial = plan.Update.Serial
-		manifest.Update.UpdateWatchTime = plan.Update.UpdateWatchTime
-	}
+
+	manifest.Update = &bosh.Update{}
+	manifest.Update.Canaries = generateParams.Plan.Update.Canaries
+	manifest.Update.CanaryWatchTime = generateParams.Plan.Update.CanaryWatchTime
+	manifest.Update.MaxInFlight = generateParams.Plan.Update.MaxInFlight
+	manifest.Update.Serial = generateParams.Plan.Update.Serial
+	manifest.Update.UpdateWatchTime = generateParams.Plan.Update.UpdateWatchTime
 
 	// Construct manifest properties.
 	mprops := make(map[string]interface{})
-	pprops := plan.Properties
+	pprops := generateParams.Plan.Properties
 
 	for i, job := range manifest.InstanceGroups[0].Jobs {
 		if job.Name == "route_registrar" {
@@ -171,17 +136,9 @@ func (a adapter) GenerateManifest(generateParams serviceadapter.GenerateManifest
 	}
 
 	mprops["parameters"] = params
-
-	if pprops["pcf_tile_version"] != nil {
-		mprops["pcf_tile_version"] = pprops["pcf_tile_version"]
-	}
+	mprops["pcf_tile_version"] = pprops["pcf_tile_version"]
 
 	domain := fmt.Sprintf("%s.%s", strings.TrimPrefix(manifest.Name, instancePrefix), pprops["domain"].(string))
-	subdomain := params["subdomain"]
-	if subdomain != nil {
-		// If cf create-service passed subdomain value, then use it.
-		domain = fmt.Sprintf("%s.storage.%s", subdomain.(string), pprops["domain"].(string))
-	}
 	mprops["domain"] = domain
 	mprops["route_registrar"] = map[string][]route{
 		"routes": []route{
@@ -220,7 +177,6 @@ func (a adapter) DeleteBinding(_ serviceadapter.DeleteBindingParams) error {
 }
 
 // DashboardUrl - returns URL that looks like https://351c705a-6210-4b5e-b853-472fc8cd7646.sys.pie-27.cfplatformeng.com
-// func (a adapter) DashboardUrl(instanceID string, plan serviceadapter.Plan, manifest bosh.BoshManifest) (url serviceadapter.DashboardUrl, err error) {
 func (a adapter) DashboardUrl(params serviceadapter.DashboardUrlParams) (url serviceadapter.DashboardUrl, err error) {
 	return serviceadapter.DashboardUrl{"https://" + params.Manifest.Properties["domain"].(string)}, nil
 }
