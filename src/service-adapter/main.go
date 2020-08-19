@@ -22,6 +22,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"time"
@@ -74,6 +75,13 @@ func (a adapter) GenerateManifest(generateParams serviceadapter.GenerateManifest
 		}
 		params = fromPreviousManifestParameters(generateParams.PreviousManifest.Properties["parameters"].(map[interface{}]interface{}))
 	}
+
+	instances, err := strconv.Atoi(generateParams.Plan.Properties["instances"].(string))
+	if err != nil {
+		f.WriteString(`Unable to parse "instances"`)
+		return generateManifest, errors.New(fmt.Sprintf(`Unable to parse "instances": %s`, err.Error()))
+	}
+	generateParams.Plan.InstanceGroups[0].Instances = instances
 
 	// If the number of instances is configured as 1 then we allow fs, gcs, azure.
 	// If the number of instances is not 1 then we allow only erasure.
@@ -137,6 +145,7 @@ func (a adapter) GenerateManifest(generateParams serviceadapter.GenerateManifest
 
 	mprops["parameters"] = params
 	mprops["pcf_tile_version"] = pprops["pcf_tile_version"]
+	mprops["licensekey"] = pprops["licensekey"]
 
 	domain := fmt.Sprintf("%s.%s", strings.TrimPrefix(manifest.Name, instancePrefix), pprops["domain"].(string))
 	mprops["domain"] = domain
