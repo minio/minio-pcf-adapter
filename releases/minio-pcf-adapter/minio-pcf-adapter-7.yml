@@ -1,0 +1,15 @@
+name: minio-pcf-adapter
+version: "7"
+commit_hash: 2b2b12c
+uncommitted_changes: true
+jobs:
+- name: odb-service-adapter
+  version: d1b93c43457c47f4d7be20eaf122b0811f03c61029df860b6c3f576db54b32fb
+  fingerprint: d1b93c43457c47f4d7be20eaf122b0811f03c61029df860b6c3f576db54b32fb
+  sha1: sha256:e22a1b0090101c31f3efeebb36731385a49fcb78d2847b5c1c1e8f90435b2651
+packages:
+- name: odb-service-adapter
+  version: be4350369388c0ec3ebd5175cec7c2b2bb030ac12ae502671f67711514641c3b
+  fingerprint: be4350369388c0ec3ebd5175cec7c2b2bb030ac12ae502671f67711514641c3b
+  sha1: sha256:ac0f70bd86edd57a838a4228b4af7bf0ed7c466302870c743b7695b3a52b0a62
+  dependencies: []
